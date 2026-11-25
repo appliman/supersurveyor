@@ -96,6 +96,8 @@ uid=$(chroot "$chroot_directory" id -u supersurveyor)
 gid=$(chroot "$chroot_directory" id -g supersurveyor)
 cmp "$settings_path" "$working_directory/settings.json"
 cmp "$state_path" "$working_directory/state.json"
+test ! -e "$legacy_settings/settings.json"
+test ! -e "$legacy_state/state.json"
 test "$(stat -c '%a:%u:%g' "$settings_path")" = 600:0:0
 test "$(stat -c '%a:%u:%g' "$state_path")" = "600:$uid:$gid"
 test -L "$wants_directory/supersurveyor.service"
