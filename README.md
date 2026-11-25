@@ -1,72 +1,54 @@
 # SuperSurveyor
 
-SuperSurveyor monitors CPU, memory, and mounted local storage on Linux. It sends SMS alerts to the Free Mobile line used for setup. The package and command are named `supersuveyor`.
-
-## Requirements
-
-- Debian 12, Debian 13, or Ubuntu 24.04 LTS on an AMD64 (x86-64) machine running systemd.
-- A Free Mobile line and HTTPS access to `smsapi.free-mobile.fr`.
-- A user with sudo access. The package contains a .NET 11 Native AOT binary and runs without Docker or a separate .NET runtime.
+Get Free Mobile SMS alerts when CPU, memory, or disk usage crosses a threshold. SuperSurveyor runs as a systemd service on Debian 12, Debian 13, and Ubuntu 24.04 LTS (AMD64).
 
 ## Install
 
-### Install from a local Debian package
-
-Download the `supersuveyor-deb` artifact from a successful run of the [APT package workflow](https://github.com/appliman/supersurveyor/actions/workflows/apt.yml) and extract the ZIP. Repository members can run the workflow from **Actions → SuperSurveyor APT package → Run workflow**. Enter a package version and leave **Publish** unchecked to build the artifact only.
-
-From the directory containing the extracted package, run the following commands. Replace the file name if you built a different version.
+Copy and paste this block into a Bash terminal. It adds the signed APT repository and installs SuperSurveyor.
 
 ```bash
-sudo apt update
-sudo apt install ./supersuveyor_0.1.0_amd64.deb
-sudo supersuveyor
+(
+  set -euo pipefail
+  sudo apt update
+  sudo apt install -y curl gnupg
+
+  repo=https://appliman.github.io/supersurveyor
+  key=$(mktemp)
+  trap 'rm -f "$key"' EXIT
+  curl -fsSL "$repo/supersuveyor.asc" -o "$key"
+
+  fingerprint=$(gpg --batch --with-colons --show-keys "$key" |
+    awk -F: '$1 == "pub" { primary = 1 } primary && $1 == "fpr" { print $10; primary = 0 }')
+  if [ "$fingerprint" != FD9CCA8302E9924920C64B356A17974BACF6ECB7 ]; then
+    echo "Unexpected SuperSurveyor APT key fingerprint." >&2
+    exit 1
+  fi
+
+  sudo install -Dm644 "$key" /etc/apt/keyrings/supersuveyor.asc
+  printf '%s\n' 'Types: deb' "URIs: $repo" 'Suites: stable' \
+    'Components: main' 'Architectures: amd64' \
+    'Signed-By: /etc/apt/keyrings/supersuveyor.asc' |
+    sudo tee /etc/apt/sources.list.d/supersuveyor.sources >/dev/null
+
+  sudo apt update
+  sudo apt install supersuveyor
+)
 ```
 
-You can also [build the package on Debian 12](#build-from-source).
+## Set up SMS alerts
 
-### Install from a signed APT repository
+1. In your [Free Mobile account](https://mobile.free.fr/account/), enable **Mon forfait mobile → Mes options → Notifications par SMS** and find the SMS notification key.
+2. Run `sudo supersuveyor` in a terminal. Enter your Free Mobile subscriber ID and SMS notification key. Press Enter to keep the default thresholds.
+3. Check your phone for the test SMS. Once Free Mobile accepts the message, SuperSurveyor saves your settings and starts automatically at boot.
 
-Use this method once a maintainer has published the APT repository and provided its HTTPS URL and signing-key fingerprint. If no repository URL has been provided, use the local package above.
+If you are already configured or want to re-enter your credentials, run `sudo supersuveyor configure` and answer **y** when asked whether to replace or revalidate them.
 
-Download the archive key and compare its **primary key fingerprint** with the fingerprint provided by the maintainer before installing it.
+<details>
+<summary>Downloads, alert defaults, and service commands</summary>
 
-```bash
-sudo apt update
-sudo apt install curl gnupg
+Download the `.deb` from the [latest GitHub release](https://github.com/appliman/supersurveyor/releases/latest) if you prefer a local install. From the download directory, run `sudo apt install ./supersuveyor_0.1.0_amd64.deb`, adjusting the filename to match your download, then follow the SMS setup above.
 
-repo_url='https://your-apt-host.example/supersurveyor'
-curl --fail --silent --show-error --location "$repo_url/supersuveyor.asc" -o supersuveyor.asc
-gpg --show-keys --fingerprint supersuveyor.asc
-```
-
-After verifying the fingerprint, run the following commands in the same shell.
-
-```bash
-sudo install -Dm644 supersuveyor.asc /etc/apt/keyrings/supersuveyor.asc
-
-sudo tee /etc/apt/sources.list.d/supersuveyor.sources >/dev/null <<EOF
-Types: deb
-URIs: $repo_url
-Suites: stable
-Components: main
-Architectures: amd64
-Signed-By: /etc/apt/keyrings/supersuveyor.asc
-EOF
-
-sudo apt update
-sudo apt install supersuveyor
-sudo supersuveyor
-```
-
-## Configure Free Mobile and start the service
-
-1. Open the [Free Mobile subscriber portal](https://mobile.free.fr/account/) and go to **Mon forfait mobile → Mes options → Notifications par SMS**. Enable the option and copy the SMS notification key. [Free Mobile activation instructions](https://assistance.free.fr/articles/1907)
-2. Run `sudo supersuveyor` from an interactive terminal. Enter your Free Mobile subscriber ID and SMS notification key when prompted. The key is hidden as you type. Press Enter at each threshold prompt to accept the displayed default.
-3. Check your phone for the test SMS. When the API accepts that message, SuperSurveyor saves the settings, starts the service, and enables it at boot. The settings file is stored at `/etc/supersuveyor/settings.json` with root-only permissions. The service receives it through systemd and runs under a dedicated account.
-
-To change thresholds or replace or revalidate the credentials, run `sudo supersuveyor configure`.
-
-## Monitoring defaults
+### Monitoring defaults
 
 SuperSurveyor samples the system every 30 seconds. The default thresholds are configurable.
 
@@ -80,7 +62,7 @@ Disk monitoring includes the root filesystem and automatically discovers local f
 
 SuperSurveyor sends one SMS per threshold breach and re-arms the alert once the reading returns to the threshold or below. Alert state is persisted across restarts. If Free Mobile rejects the credentials, use `sudo supersuveyor configure` to revalidate or replace them.
 
-## Check, update, or remove the service
+### Check, update, or remove the service
 
 ```bash
 sudo systemctl status supersuveyor
@@ -98,7 +80,12 @@ sudo apt install --only-upgrade supersuveyor
 
 For a local package, install the new `.deb` using the same `sudo apt install ./...` command. Upgrades preserve settings and alert state. `sudo apt remove supersuveyor` keeps those files. `sudo apt purge supersuveyor` deletes them.
 
-## Build from source
+</details>
+
+<details>
+<summary>Build and publish</summary>
+
+### Build from source
 
 Build on Debian 12 AMD64 when targeting all three supported distributions. Install the [.NET 11 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/11.0) on the build machine, then run these commands from the repository root:
 
@@ -112,12 +99,12 @@ bash packaging/build-deb.sh 0.1.0 ./dist
 
 The result is `dist/supersuveyor_0.1.0_amd64.deb`.
 
-## Publish the signed APT repository
+### Publish the signed APT repository
 
 GitHub Pages from a private source repository requires an eligible GitHub plan and organization settings. A public Pages deployment makes the package and its APT metadata publicly downloadable, while the source repository can stay private. [GitHub Pages settings](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 
 1. In the repository, select **Settings → Pages → Build and deployment → Source → GitHub Actions**.
-2. Use a dedicated OpenPGP signing key. Under **Settings → Secrets and variables → Actions**, set the `APT_SIGNING_KEY` secret to the ASCII-armored private key. Set the `APT_SIGNING_PASSPHRASE` secret if the key is protected. Set the `APT_SIGNING_FINGERPRINT` variable to the full primary key fingerprint.
+2. Use a dedicated OpenPGP signing key. Set the `APT_SIGNING_KEY` secret to the ASCII-armored private key in the `github-pages` environment. Set the `APT_SIGNING_PASSPHRASE` secret in the same environment if the key is protected. Set the repository variable `APT_SIGNING_FINGERPRINT` to the full primary key fingerprint.
 3. Run the **SuperSurveyor APT package** workflow on `main`, enter the new Debian package version, and check **Publish**. The workflow builds the package, tests signed APT installation on the supported distributions, then deploys the signed archive to Pages.
 4. Share the deployed HTTPS URL and the expected signing-key fingerprint with the users who will install the package.
 
@@ -130,3 +117,5 @@ bash packaging/build-apt-repository.sh \
 ```
 
 Upload the contents of `apt-site` to that HTTPS location. The builder includes signed APT indexes, the package, the public key, and a `supersuveyor.sources` file.
+
+</details>
