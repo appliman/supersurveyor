@@ -2,6 +2,8 @@
 
 Get Free Mobile SMS alerts when CPU, memory, or disk usage crosses a threshold. SuperSurveyor runs as a systemd service on Debian 12, Debian 13, and Ubuntu 24.04 LTS (AMD64).
 
+Across five installations sampled after 13–32 minutes of uptime, SuperSurveyor averaged **8.45 MiB of cgroup memory** and **5.8 threads**. The mean per-machine cgroup peak was **9.06 MiB**, and mean process RSS was **15.68 MiB**.
+
 ## Install
 
 Copy and paste this block into a Bash terminal. It adds the signed APT repository and installs SuperSurveyor.
