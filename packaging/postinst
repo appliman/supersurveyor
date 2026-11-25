@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+if [ "$1" = configure ]; then
+    if ! getent passwd supersuveyor >/dev/null; then
+        adduser --quiet --system --group --no-create-home supersuveyor
+    fi
+
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        if [ -f /etc/supersuveyor/settings.json ] && systemctl --quiet is-active supersuveyor.service; then
+            deb-systemd-invoke restart supersuveyor.service
+        fi
+    fi
+fi

@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+if [ "$1" = purge ]; then
+    rm -f /etc/systemd/system/multi-user.target.wants/supersuveyor.service
+    rm -f /etc/supersuveyor/settings.json /etc/supersuveyor/.configure.lock /var/lib/supersuveyor/state.json
+    rmdir /etc/supersuveyor /var/lib/supersuveyor 2>/dev/null || true
+fi
+
+case "$1" in
+    remove|purge)
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload
+        fi
+        ;;
+esac

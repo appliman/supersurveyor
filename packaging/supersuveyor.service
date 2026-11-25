@@ -1,0 +1,23 @@
+[Unit]
+Description=SuperSurveyor system monitor
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/supersuveyor/settings.json
+
+[Service]
+Type=simple
+User=supersuveyor
+Group=supersuveyor
+ExecStart=/usr/bin/supersuveyor monitor
+LoadCredential=settings.json:/etc/supersuveyor/settings.json
+StateDirectory=supersuveyor
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

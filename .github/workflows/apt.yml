@@ -1,0 +1,175 @@
+name: SuperSurveyor APT package
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'packaging/**'
+      - '.github/workflows/apt.yml'
+      - 'global.json'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Debian package version
+        required: true
+        type: string
+        default: '0.1.0'
+      publish:
+        description: Publish the signed repository to GitHub Pages
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supersuveyor-apt-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Select SDK installation directory
+        run: printf 'DOTNET_INSTALL_DIR=%s/dotnet-sdk\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '11.0.x'
+      - name: Run application tests
+        run: dotnet run --project src/SuperSurveyor.Tests/SuperSurveyor.Tests.csproj -c Release
+      - name: Create Debian 12 build root
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap debian-archive-keyring
+          build_root="$RUNNER_TEMP/supersuveyor-bookworm"
+          sudo debootstrap --arch=amd64 --variant=minbase \
+            --include=build-essential,ca-certificates,clang,libicu72,libssl-dev,zlib1g-dev \
+            bookworm "$build_root" https://deb.debian.org/debian
+          sudo mkdir -p "$build_root/opt/dotnet" "$build_root/build"
+          sudo install -d -m700 "$build_root/run/user/0"
+          sudo cp -a "$DOTNET_INSTALL_DIR/." "$build_root/opt/dotnet/"
+          git archive HEAD src packaging | sudo tar -xf - -C "$build_root/build"
+      - name: Build native Debian package
+        env:
+          PACKAGE_VERSION: ${{ inputs.version || '0.0.0~ci' }}
+        run: |
+          build_root="$RUNNER_TEMP/supersuveyor-bookworm"
+          sudo unshare --mount --propagation private bash -euc '
+            mount -t proc proc "$1/proc"
+            chroot "$1" /usr/bin/env PATH=/opt/dotnet:/usr/sbin:/usr/bin:/sbin:/bin \
+              DOTNET_ROOT=/opt/dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1 XDG_RUNTIME_DIR=/run/user/0 \
+              bash /build/packaging/build-deb.sh "$2" /build/artifacts
+          ' _ "$build_root" "$PACKAGE_VERSION"
+          mkdir artifacts
+          sudo cp "$build_root"/build/artifacts/*.deb artifacts/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: supersuveyor-deb
+          path: artifacts/*.deb
+          if-no-files-found: error
+
+  apt-smoke:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: bookworm
+            mirror: https://deb.debian.org/debian
+          - suite: trixie
+            mirror: https://deb.debian.org/debian
+          - suite: noble
+            mirror: https://archive.ubuntu.com/ubuntu
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: supersuveyor-deb
+          path: artifacts
+      - name: Verify signed APT installation and upgrade
+        env:
+          SUITE: ${{ matrix.suite }}
+          MIRROR: ${{ matrix.mirror }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils debootstrap debian-archive-keyring
+          test_root="$RUNNER_TEMP/supersuveyor-$SUITE"
+          keyring_arguments=()
+          if [[ "$SUITE" = trixie ]]; then
+            keyring="$RUNNER_TEMP/trixie-archive.gpg"
+            append_debian_key() {
+              local key_file="$RUNNER_TEMP/$1"
+              local fingerprint
+              curl --fail --silent --show-error --location \
+                "https://ftp-master.debian.org/keys/$1" --output "$key_file"
+              fingerprint=$(gpg --batch --show-keys --with-colons "$key_file" \
+                | awk -F: '$1 == "fpr" { print $10; exit }')
+              test "$fingerprint" = "$2"
+              gpg --batch --dearmor < "$key_file" >> "$keyring"
+            }
+            append_debian_key archive-key-13.asc 04B54C3CDCA79751B16BC6B5225629DF75B188BD
+            append_debian_key release-13.asc 41587F7DB8C774BCCF131416762F67A0B2C39DE4
+            keyring_arguments+=(--keyring="$keyring")
+          fi
+          sudo debootstrap --arch=amd64 --variant=minbase \
+            --include=ca-certificates "${keyring_arguments[@]}" "$SUITE" "$test_root" "$MIRROR"
+          sudo unshare --mount --propagation private bash -euc '
+            mount -t proc proc "$1/proc"
+            bash packaging/check-apt-install.sh "$@"
+          ' _ "$test_root" artifacts/*.deb
+
+  pages:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch
+    needs: apt-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: supersuveyor-deb
+          path: artifacts
+      - uses: actions/configure-pages@v5
+        id: site
+      - name: Create signed APT repository
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
+          APT_SIGNING_FINGERPRINT: ${{ vars.APT_SIGNING_FINGERPRINT }}
+          APT_SITE_URL: ${{ steps.site.outputs.base_url }}
+        run: |
+          if [[ -z "$APT_SIGNING_KEY" || -z "$APT_SIGNING_FINGERPRINT" ]]; then
+            printf 'Configure APT_SIGNING_KEY and APT_SIGNING_FINGERPRINT before publishing.\n' >&2
+            exit 1
+          fi
+          sudo apt-get update
+          sudo apt-get install -y apt-utils
+          export GNUPGHOME
+          GNUPGHOME=$(mktemp -d)
+          trap 'gpgconf --kill gpg-agent; rm -rf -- "$GNUPGHOME"' EXIT
+          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+          unset APT_SIGNING_KEY
+          bash packaging/build-apt-repository.sh artifacts/*.deb site "$APT_SITE_URL"
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deployment
