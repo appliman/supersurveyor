@@ -149,7 +149,7 @@ async Task VerifySms()
 [System.Runtime.Versioning.SupportedOSPlatform("linux")]
 static void VerifyLinuxStorage()
 {
-    var directory = Directory.CreateTempSubdirectory("supersuveyor-tests-");
+    var directory = Directory.CreateTempSubdirectory("supersurveyor-tests-");
     try
     {
         var path = Path.Combine(directory.FullName, "settings.json");

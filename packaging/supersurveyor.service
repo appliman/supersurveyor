@@ -2,15 +2,15 @@
 Description=SuperSurveyor system monitor
 Wants=network-online.target
 After=network-online.target
-ConditionPathExists=/etc/supersuveyor/settings.json
+ConditionPathExists=/etc/supersurveyor/settings.json
 
 [Service]
 Type=simple
-User=supersuveyor
-Group=supersuveyor
-ExecStart=/usr/bin/supersuveyor monitor
-LoadCredential=settings.json:/etc/supersuveyor/settings.json
-StateDirectory=supersuveyor
+User=supersurveyor
+Group=supersurveyor
+ExecStart=/usr/bin/supersurveyor monitor
+LoadCredential=settings.json:/etc/supersurveyor/settings.json
+StateDirectory=supersurveyor
 StateDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=yes

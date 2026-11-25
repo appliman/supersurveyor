@@ -14,7 +14,7 @@ internal sealed partial class Setup(FreeMobileSms sms, string settingsPath)
     {
         if (GetEffectiveUserId() != 0 || Console.IsInputRedirected)
         {
-            Console.Error.WriteLine("Run sudo supersuveyor configure from an interactive terminal.");
+            Console.Error.WriteLine("Run sudo supersurveyor configure from an interactive terminal.");
             return 1;
         }
 
@@ -86,7 +86,7 @@ internal sealed partial class Setup(FreeMobileSms sms, string settingsPath)
             var started = enabled && await Systemctl("restart", cancellationToken);
             if (!started)
             {
-                Console.Error.WriteLine("Settings were saved. Run sudo systemctl enable --now supersuveyor to start the service.");
+                Console.Error.WriteLine("Settings were saved. Run sudo systemctl enable --now supersurveyor to start the service.");
                 return 1;
             }
 
@@ -109,7 +109,7 @@ internal sealed partial class Setup(FreeMobileSms sms, string settingsPath)
             RedirectStandardError = true
         };
         startInfo.ArgumentList.Add(command);
-        startInfo.ArgumentList.Add("supersuveyor.service");
+        startInfo.ArgumentList.Add("supersurveyor.service");
 
         try
         {

@@ -2,14 +2,14 @@
 set -euo pipefail
 export LC_ALL=C
 
-if [[ $# != 3 ]]; then
-    printf 'Usage: %s PACKAGE OUTPUT_DIRECTORY REPOSITORY_URL\n' "$0" >&2
+if [[ $# -lt 3 ]]; then
+    printf 'Usage: %s OUTPUT_DIRECTORY REPOSITORY_URL PACKAGE [PACKAGE ...]\n' "$0" >&2
     exit 2
 fi
 
-package=$(realpath -- "$1")
-output_directory=$2
-repository_url=${3%/}
+output_directory=$1
+repository_url=${2%/}
+shift 2
 case "$repository_url" in
     https://*|file:///*) ;;
     *)
@@ -22,12 +22,6 @@ if [[ "$repository_url" =~ [[:space:]] ]]; then
     exit 2
 fi
 
-if [[ "$(dpkg-deb -f "$package" Package)" != supersuveyor || \
-      "$(dpkg-deb -f "$package" Architecture)" != amd64 ]]; then
-    printf 'Expected an amd64 supersuveyor Debian package.\n' >&2
-    exit 2
-fi
-
 fingerprint=${APT_SIGNING_FINGERPRINT:?Set APT_SIGNING_FINGERPRINT to the OpenPGP key fingerprint.}
 if [[ ! "$fingerprint" =~ ^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$ ]]; then
     printf 'An OpenPGP key fingerprint is required.\n' >&2
@@ -35,9 +29,24 @@ if [[ ! "$fingerprint" =~ ^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$ ]]; then
 fi
 
 mkdir -- "$output_directory"
+for package in "$@"; do
+    name=$(dpkg-deb -f "$package" Package)
+    architecture=$(dpkg-deb -f "$package" Architecture)
+    version=$(dpkg-deb -f "$package" Version)
+    case "$name:$architecture" in
+        supersurveyor:amd64|supersuveyor:amd64|supersuveyor:all) ;;
+        *)
+            printf 'Unexpected Debian package: %s (%s).\n' "$name" "$architecture" >&2
+            exit 2
+            ;;
+    esac
+    dpkg --validate-version "$version"
+    destination="$output_directory/pool/main/s/$name/${name}_${version}_${architecture}.deb"
+    install -Dm644 -- "$package" "$destination"
+done
+
 cd -- "$output_directory"
-mkdir -p pool/main/s/supersuveyor dists/stable/main/binary-amd64
-install -m644 "$package" pool/main/s/supersuveyor/
+mkdir -p dists/stable/main/binary-amd64
 
 package_index=dists/stable/main/binary-amd64/Packages
 apt-ftparchive packages pool > "$package_index"
@@ -60,15 +69,18 @@ gpg --batch --pinentry-mode loopback --passphrase-fd 3 \
 gpg --batch --pinentry-mode loopback --passphrase-fd 3 \
     --local-user "$fingerprint" --armor --output "$release.gpg" --detach-sign "$release" \
     3<<<"${APT_SIGNING_PASSPHRASE:-}"
-gpg --batch --armor --export-options export-minimal --export "$fingerprint" > supersuveyor.asc
-test -s supersuveyor.asc
+gpg --batch --armor --export-options export-minimal --export "$fingerprint" > supersurveyor.asc
+test -s supersurveyor.asc
+cp -- supersurveyor.asc supersuveyor.asc
 
-cat > supersuveyor.sources <<EOF
+for name in supersurveyor supersuveyor; do
+    cat > "$name.sources" <<EOF
 Types: deb
 URIs: $repository_url
 Suites: stable
 Components: main
 Architectures: amd64
-Signed-By: /etc/apt/keyrings/supersuveyor.asc
+Signed-By: /etc/apt/keyrings/$name.asc
 EOF
-printf '%s\n' "$fingerprint" > supersuveyor.fingerprint
+    printf '%s\n' "$fingerprint" > "$name.fingerprint"
+done

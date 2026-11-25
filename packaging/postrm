@@ -2,9 +2,10 @@
 set -eu
 
 if [ "$1" = purge ]; then
-    rm -f /etc/systemd/system/multi-user.target.wants/supersuveyor.service
-    rm -f /etc/supersuveyor/settings.json /etc/supersuveyor/.configure.lock /var/lib/supersuveyor/state.json
-    rmdir /etc/supersuveyor /var/lib/supersuveyor 2>/dev/null || true
+    rm -f /etc/systemd/system/multi-user.target.wants/supersurveyor.service
+    rm -f /etc/supersurveyor/settings.json /etc/supersurveyor/.configure.lock \
+        /etc/supersurveyor/.migration-pending /var/lib/supersurveyor/state.json
+    rmdir /etc/supersurveyor /var/lib/supersurveyor 2>/dev/null || true
 fi
 
 case "$1" in

@@ -5,8 +5,8 @@ namespace SuperSurveyor;
 
 internal static class Program
 {
-    private const string SettingsPath = "/etc/supersuveyor/settings.json";
-    private const string StatePath = "/var/lib/supersuveyor/state.json";
+    private const string SettingsPath = "/etc/supersurveyor/settings.json";
+    private const string StatePath = "/var/lib/supersurveyor/state.json";
 
     internal static async Task<int> Main(string[] args)
     {
@@ -57,14 +57,14 @@ internal static class Program
                 var credentialsDirectory = Environment.GetEnvironmentVariable("CREDENTIALS_DIRECTORY");
                 if (string.IsNullOrWhiteSpace(credentialsDirectory))
                 {
-                    Console.Error.WriteLine("Start the monitor with systemctl start supersuveyor.");
+                    Console.Error.WriteLine("Start the monitor with systemctl start supersurveyor.");
                     return 1;
                 }
 
                 var settings = Storage.Read(Path.Combine(credentialsDirectory, "settings.json"), SurveyorJson.Default.Settings);
                 if (settings is null || !settings.IsValid())
                 {
-                    Console.Error.WriteLine("Settings are invalid. Run sudo supersuveyor configure.");
+                    Console.Error.WriteLine("Settings are invalid. Run sudo supersurveyor configure.");
                     return 1;
                 }
 
@@ -74,7 +74,7 @@ internal static class Program
 
             if (command == "" && File.Exists(SettingsPath))
             {
-                Console.WriteLine("SuperSurveyor is configured. Run sudo supersuveyor configure to change its settings.");
+                Console.WriteLine("SuperSurveyor is configured. Run sudo supersurveyor configure to change its settings.");
                 return 0;
             }
 
@@ -97,7 +97,7 @@ internal static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-            Usage: sudo supersuveyor [configure]
+            Usage: sudo supersurveyor [configure]
 
             Run without arguments to set up SuperSurveyor on this machine.
             Run configure to change thresholds or replace Free Mobile credentials.

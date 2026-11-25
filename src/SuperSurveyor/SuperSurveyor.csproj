@@ -2,7 +2,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net11.0</TargetFramework>
-    <AssemblyName>supersuveyor</AssemblyName>
+    <AssemblyName>supersurveyor</AssemblyName>
+    <Version>0.2.0</Version>
     <RootNamespace>SuperSurveyor</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

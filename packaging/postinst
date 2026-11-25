@@ -1,15 +1,143 @@
 #!/bin/sh
 set -eu
 
-if [ "$1" = configure ]; then
-    if ! getent passwd supersuveyor >/dev/null; then
-        adduser --quiet --system --group --no-create-home supersuveyor
+if [ "$1" != configure ]; then
+    exit 0
+fi
+
+umask 077
+old_config=/etc/supersuveyor
+old_state=/var/lib/supersuveyor
+config=/etc/supersurveyor
+state=/var/lib/supersurveyor
+old_unit=supersuveyor.service
+unit=supersurveyor.service
+old_link=/etc/systemd/system/multi-user.target.wants/$old_unit
+migration_marker=$config/.migration-pending
+
+# These paths are written by a privileged maintainer script. Check both file and parent links.
+for directory in "$old_config" "$old_state" "$config" "$state"; do
+    if [ -L "$directory" ]; then
+        printf 'SuperSurveyor cannot migrate through a symbolic-link directory: %s\n' "$directory" >&2
+        exit 1
+    fi
+done
+if [ -L "$migration_marker" ]; then
+    printf 'SuperSurveyor cannot use a symbolic link as its migration marker.\n' >&2
+    exit 1
+fi
+
+copy_legacy_file() (
+    source=$1
+    destination=$2
+    owner=$3
+    if [ ! -f "$source" ] || [ -L "$source" ]; then
+        exit 0
     fi
 
-    if [ -d /run/systemd/system ]; then
-        systemctl daemon-reload
-        if [ -f /etc/supersuveyor/settings.json ] && systemctl --quiet is-active supersuveyor.service; then
-            deb-systemd-invoke restart supersuveyor.service
+    if [ ! -e "$destination" ] && [ ! -L "$destination" ]; then
+        temporary=$(mktemp "$(dirname -- "$destination")/.migration.XXXXXXXX")
+        trap 'rm -f -- "$temporary"' 0
+        cp --no-dereference -- "$source" "$temporary"
+        test -f "$temporary"
+        test ! -L "$temporary"
+        chmod 0600 "$temporary"
+        chown "$owner" "$temporary"
+        mv -T --no-clobber -- "$temporary" "$destination"
+    fi
+
+    # Keep a legacy file if a different canonical file already exists.
+    if [ ! -L "$destination" ] && cmp -s -- "$source" "$destination"; then
+        rm -f -- "$source"
+    fi
+)
+
+if ! getent passwd supersurveyor >/dev/null; then
+    adduser --quiet --system --group --no-create-home supersurveyor
+fi
+
+live_systemd=0
+if [ -d /run/systemd/system ]; then
+    live_systemd=1
+fi
+
+old_status=inactive
+if [ "$live_systemd" -eq 1 ]; then
+    old_status=$(systemctl is-active "$old_unit" 2>/dev/null || true)
+fi
+
+if [ ! -f "$migration_marker" ]; then
+    was_active=0
+    was_enabled=0
+    case "$old_status" in
+        active|activating|reloading|refreshing) was_active=1 ;;
+    esac
+    if [ -L "$old_link" ]; then
+        was_enabled=1
+    fi
+
+    if [ "$was_active" -eq 1 ] || [ "$was_enabled" -eq 1 ] ||
+        [ -f "$old_config/settings.json" ] || [ -f "$old_state/state.json" ]; then
+        install -d -m0700 -o root -g root "$config"
+        # Save the service state before stopping the old process, so configure can be retried.
+        marker_temporary=$(mktemp "$config/.migration-marker.XXXXXXXX")
+        trap 'rm -f -- "$marker_temporary"' 0
+        printf '%s %s\n' "$was_active" "$was_enabled" > "$marker_temporary"
+        mv -T -- "$marker_temporary" "$migration_marker"
+    fi
+fi
+
+if [ -f "$migration_marker" ]; then
+    read -r was_active was_enabled < "$migration_marker"
+    case "$was_active:$was_enabled" in
+        0:0|0:1|1:0|1:1) ;;
+        *) printf 'SuperSurveyor could not read its migration marker.\n' >&2; exit 1 ;;
+    esac
+
+    case "$old_status" in
+        active|activating|reloading|refreshing|deactivating)
+            systemctl stop "$old_unit"
+            ;;
+    esac
+
+    copy_legacy_file "$old_config/settings.json" "$config/settings.json" root:root
+    if [ -f "$old_state/state.json" ]; then
+        install -d -m0700 -o supersurveyor -g supersurveyor "$state"
+        copy_legacy_file "$old_state/state.json" "$state/state.json" supersurveyor:supersurveyor
+    fi
+    if [ ! -e "$old_config/settings.json" ]; then
+        rm -f -- "$old_config/.configure.lock"
+    fi
+    rmdir -- "$old_config" "$old_state" 2>/dev/null || true
+
+    if [ "$was_enabled" -eq 1 ]; then
+        if [ "$live_systemd" -eq 1 ]; then
+            systemctl enable "$unit"
+        else
+            systemctl --root=/ enable "$unit"
         fi
+    fi
+    if [ -L "$old_link" ]; then
+        rm -f -- "$old_link"
+    fi
+
+    if [ "$live_systemd" -eq 1 ]; then
+        systemctl daemon-reload
+        if [ "$was_active" -eq 1 ] && [ -f "$config/settings.json" ]; then
+            # Start a previously running unit even when it was started manually while disabled.
+            policy=0
+            if [ -x /usr/sbin/policy-rc.d ]; then
+                /usr/sbin/policy-rc.d "$unit" start || policy=$?
+            fi
+            if [ "$policy" -ne 101 ]; then
+                systemctl start "$unit"
+            fi
+        fi
+    fi
+    rm -f -- "$migration_marker"
+elif [ "$live_systemd" -eq 1 ]; then
+    systemctl daemon-reload
+    if [ -f "$config/settings.json" ] && systemctl --quiet is-active "$unit"; then
+        deb-systemd-invoke restart "$unit"
     fi
 fi

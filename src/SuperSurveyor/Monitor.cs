@@ -118,7 +118,7 @@ internal sealed class Monitor(FreeMobileSms sms)
                         if (state.RejectedCredentialRevision != settings.CredentialRevision)
                         {
                             state.RejectedCredentialRevision = settings.CredentialRevision;
-                            Console.Error.WriteLine("Free Mobile rejected the credentials. Run sudo supersuveyor configure to resume SMS alerts.");
+                            Console.Error.WriteLine("Free Mobile rejected the credentials. Run sudo supersurveyor configure to resume SMS alerts.");
                         }
                     }
                     else if (delivery.Outcome == SmsOutcome.Accepted)

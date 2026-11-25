@@ -6,6 +6,8 @@ Get Free Mobile SMS alerts when CPU, memory, or disk usage crosses a threshold. 
 
 Copy and paste this block into a Bash terminal. It adds the signed APT repository and installs SuperSurveyor.
 
+If you already have the old `supersuveyor` package installed, run `sudo apt update && sudo apt upgrade` instead. The existing APT source supplies the transition to `supersurveyor` and carries over your settings and service activation. If you installed 0.1.0 from a local file without adding the APT source, use the block below to add it and migrate.
+
 ```bash
 (
   set -euo pipefail
@@ -15,7 +17,7 @@ Copy and paste this block into a Bash terminal. It adds the signed APT repositor
   repo=https://appliman.github.io/supersurveyor
   key=$(mktemp)
   trap 'rm -f "$key"' EXIT
-  curl -fsSL "$repo/supersuveyor.asc" -o "$key"
+  curl -fsSL "$repo/supersurveyor.asc" -o "$key"
 
   fingerprint=$(gpg --batch --with-colons --show-keys "$key" |
     awk -F: '$1 == "pub" { primary = 1 } primary && $1 == "fpr" { print $10; primary = 0 }')
@@ -24,29 +26,31 @@ Copy and paste this block into a Bash terminal. It adds the signed APT repositor
     exit 1
   fi
 
-  sudo install -Dm644 "$key" /etc/apt/keyrings/supersuveyor.asc
-  printf '%s\n' 'Types: deb' "URIs: $repo" 'Suites: stable' \
-    'Components: main' 'Architectures: amd64' \
-    'Signed-By: /etc/apt/keyrings/supersuveyor.asc' |
-    sudo tee /etc/apt/sources.list.d/supersuveyor.sources >/dev/null
+  if [ ! -f /etc/apt/sources.list.d/supersuveyor.sources ]; then
+    sudo install -Dm644 "$key" /etc/apt/keyrings/supersurveyor.asc
+    printf '%s\n' 'Types: deb' "URIs: $repo" 'Suites: stable' \
+      'Components: main' 'Architectures: amd64' \
+      'Signed-By: /etc/apt/keyrings/supersurveyor.asc' |
+      sudo tee /etc/apt/sources.list.d/supersurveyor.sources >/dev/null
+  fi
 
   sudo apt update
-  sudo apt install supersuveyor
+  sudo apt install supersurveyor
 )
 ```
 
 ## Set up SMS alerts
 
 1. In your [Free Mobile account](https://mobile.free.fr/account/), enable **Mon forfait mobile → Mes options → Notifications par SMS** and find the SMS notification key.
-2. Run `sudo supersuveyor` in a terminal. Enter your Free Mobile subscriber ID and SMS notification key. Press Enter to keep the default thresholds.
+2. Run `sudo supersurveyor` in a terminal. Enter your Free Mobile subscriber ID and SMS notification key. Press Enter to keep the default thresholds.
 3. Check your phone for the test SMS. Once Free Mobile accepts the message, SuperSurveyor saves your settings and starts automatically at boot.
 
-If you are already configured or want to re-enter your credentials, run `sudo supersuveyor configure` and answer **y** when asked whether to replace or revalidate them.
+If you are already configured or want to re-enter your credentials, run `sudo supersurveyor configure` and answer **y** when asked whether to replace or revalidate them.
 
 <details>
 <summary>Downloads, alert defaults, and service commands</summary>
 
-Download the `.deb` from the [latest GitHub release](https://github.com/appliman/supersurveyor/releases/latest) if you prefer a local install. From the download directory, run `sudo apt install ./supersuveyor_0.1.0_amd64.deb`, adjusting the filename to match your download, then follow the SMS setup above.
+Download the `.deb` from the [latest GitHub release](https://github.com/appliman/supersurveyor/releases/latest) if you prefer a local install. From the download directory, run `sudo apt install ./supersurveyor_0.2.0_amd64.deb`, adjusting the filename to match your download, then follow the SMS setup above.
 
 ### Monitoring defaults
 
@@ -58,27 +62,29 @@ SuperSurveyor samples the system every 30 seconds. The default thresholds are co
 | Memory | Above 90% on the first reading |
 | Disk | Above 85% on the first reading for each filesystem |
 
+Automatic SMS alerts are paused from 22:00 until 07:00 on weekdays or 08:30 on weekends, using the server's local time. The service saves alerts during this period and sends one summary when SMS delivery resumes. To change the schedule, run `sudo supersurveyor configure`.
+
 Disk monitoring includes the root filesystem and automatically discovers local filesystems mounted later. Boot volumes, swap, virtual filesystems, and network mounts are excluded. A volume mounted at several paths is counted once. If the service cannot reach a volume, it records the unavailable measurement in its journal.
 
-SuperSurveyor sends one SMS per threshold breach and re-arms the alert once the reading returns to the threshold or below. Alert state is persisted across restarts. If Free Mobile rejects the credentials, use `sudo supersuveyor configure` to revalidate or replace them.
+SuperSurveyor sends one SMS per threshold breach and re-arms the alert once the reading returns to the threshold or below. Alert state is persisted across restarts. If Free Mobile rejects the credentials, use `sudo supersurveyor configure` to revalidate or replace them.
 
 ### Check, update, or remove the service
 
 ```bash
-sudo systemctl status supersuveyor
-sudo journalctl -u supersuveyor -n 50 --no-pager
+sudo systemctl status supersurveyor
+sudo journalctl -u supersurveyor -n 50 --no-pager
 ```
 
-If no test SMS arrives, check that the Free Mobile option is enabled, verify the subscriber ID and key, and check outbound HTTPS access. If setup saved the settings but could not start the service, run `sudo systemctl enable --now supersuveyor` and check the journal.
+If no test SMS arrives, check that the Free Mobile option is enabled, verify the subscriber ID and key, and check outbound HTTPS access. If setup saved the settings but could not start the service, run `sudo systemctl enable --now supersurveyor` and check the journal.
 
 For systems using the signed repository, upgrade with:
 
 ```bash
 sudo apt update
-sudo apt install --only-upgrade supersuveyor
+sudo apt install --only-upgrade supersurveyor
 ```
 
-For a local package, install the new `.deb` using the same `sudo apt install ./...` command. Upgrades preserve settings and alert state. `sudo apt remove supersuveyor` keeps those files. `sudo apt purge supersuveyor` deletes them.
+For a local package, install the new `.deb` using the same `sudo apt install ./...` command. Upgrades preserve settings and alert state. `sudo apt remove supersurveyor` stops and removes the service and keeps those files. `sudo apt purge supersurveyor` deletes them.
 
 </details>
 
@@ -94,10 +100,10 @@ sudo apt update
 sudo apt install build-essential ca-certificates clang libicu72 libssl-dev zlib1g-dev
 
 dotnet run --project src/SuperSurveyor.Tests/SuperSurveyor.Tests.csproj -c Release
-bash packaging/build-deb.sh 0.1.0 ./dist
+bash packaging/build-deb.sh 0.2.0 ./dist
 ```
 
-The result is `dist/supersuveyor_0.1.0_amd64.deb`.
+The build produces `dist/supersurveyor_0.2.0_amd64.deb` and the `supersuveyor_0.2.0_all.deb` transition package.
 
 ### Publish the signed APT repository
 
@@ -113,9 +119,9 @@ You can also publish the static repository on another HTTPS host. With `apt-util
 ```bash
 export APT_SIGNING_FINGERPRINT='<full OpenPGP fingerprint>'
 bash packaging/build-apt-repository.sh \
-  ./dist/supersuveyor_0.1.0_amd64.deb ./apt-site 'https://your-apt-host.example/supersurveyor'
+  ./apt-site 'https://your-apt-host.example/supersurveyor' ./dist/*.deb
 ```
 
-Upload the contents of `apt-site` to that HTTPS location. The builder includes signed APT indexes, the package, the public key, and a `supersuveyor.sources` file.
+Upload the contents of `apt-site` to that HTTPS location. The builder includes signed APT indexes, the package, the public key, and a `supersurveyor.sources` file.
 
 </details>
