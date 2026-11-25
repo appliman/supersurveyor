@@ -58,6 +58,9 @@ internal sealed partial class Setup(FreeMobileSms sms, string settingsPath)
                 settings = settings with { DiskThresholds = ReadDiskThresholds(settings.DiskThreshold, cancellationToken) };
             }
 
+            var quietHours = ReadQuietHours(settings.QuietHours ?? new(), cancellationToken);
+            settings = settings with { QuietHours = quietHours };
+
             if (replaceCredentials)
             {
                 var test = await sms.Send(settings,
@@ -147,6 +150,47 @@ internal sealed partial class Setup(FreeMobileSms sms, string settingsPath)
 
             var normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
             result[normalized] = ReadNumber("Threshold (%)", defaultValue, 0, 100, false, cancellationToken);
+        }
+    }
+
+    private static QuietHours ReadQuietHours(QuietHours current, CancellationToken cancellationToken)
+    {
+        Console.WriteLine("SMS quiet hours use the server's local time.");
+        while (true)
+        {
+            var result = new QuietHours
+            {
+                Start = ReadTime("Evening quiet hours start", current.Start, cancellationToken),
+                WeekdayResume = ReadTime("Weekday SMS resume time", current.WeekdayResume, cancellationToken),
+                WeekendResume = ReadTime("Weekend SMS resume time", current.WeekendResume, cancellationToken)
+            };
+            if (result.IsValid())
+            {
+                return result;
+            }
+
+            Console.WriteLine("The evening start must be later than both morning resume times.");
+            current = result;
+        }
+    }
+
+    private static TimeOnly ReadTime(string label, TimeOnly currentValue, CancellationToken cancellationToken)
+    {
+        var formatted = currentValue.ToString("HH:mm", CultureInfo.InvariantCulture);
+        while (true)
+        {
+            var input = ReadLine($"{label} (HH:mm) [{formatted}]: ", cancellationToken);
+            if (input.Length == 0)
+            {
+                return currentValue;
+            }
+
+            if (TimeOnly.TryParseExact(input, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var result))
+            {
+                return result;
+            }
+
+            Console.WriteLine("Enter a time in 24-hour HH:mm format, such as 08:30.");
         }
     }
 

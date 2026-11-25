@@ -10,6 +10,7 @@ var disk = new Measurement("disk:ext4:/dev/sdb1", "Disk /data", 91, 85, TimeSpan
 
 VerifyCpu();
 VerifyRetryAndPersistence();
+QuietHoursTests.Run();
 VerifyMetrics();
 await VerifySms();
 if (OperatingSystem.IsLinux())

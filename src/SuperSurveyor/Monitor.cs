@@ -11,7 +11,7 @@ internal sealed class Monitor(FreeMobileSms sms)
     internal async Task Run(Settings settings, string statePath, CancellationToken cancellationToken)
     {
         var state = Storage.Read(statePath, SurveyorJson.Default.MonitorState) ?? new();
-        if (state.Episodes is null)
+        if (state.Episodes is null || state.BufferedAlerts is null)
         {
             throw new InvalidDataException("The alert state has an invalid format.");
         }
@@ -20,6 +20,7 @@ internal sealed class Monitor(FreeMobileSms sms)
         var metrics = new LinuxMetrics();
         var unavailable = new HashSet<string>(StringComparer.Ordinal);
         var host = Environment.MachineName;
+        var timeZone = TimeZoneInfo.Local;
         using var timer = new PeriodicTimer(SamplePeriod);
 
         var previousSample = Stopwatch.GetTimestamp();
@@ -38,6 +39,7 @@ internal sealed class Monitor(FreeMobileSms sms)
             }
 
             var stateEntries = state.Episodes.ToArray();
+            var bufferedCount = state.BufferedAlerts.Count;
             var rejectedRevision = state.RejectedCredentialRevision;
             var pending = new List<(Measurement Measurement, TimeSpan Duration)>();
             var now = DateTimeOffset.UtcNow;
@@ -62,19 +64,33 @@ internal sealed class Monitor(FreeMobileSms sms)
                 }
             }
 
-            if (!stateEntries.SequenceEqual(state.Episodes))
+            var dispatchAt = DateTimeOffset.UtcNow;
+            var quietHoursActive = settings.QuietHours.IsActive(dispatchAt, timeZone);
+            if (quietHoursActive || settings.QuietHours.IsActive(now, timeZone))
+            {
+                foreach (var item in pending)
+                {
+                    rules.Defer(item.Measurement, now);
+                }
+
+                pending.Clear();
+            }
+
+            if (bufferedCount != state.BufferedAlerts.Count || !stateEntries.SequenceEqual(state.Episodes))
             {
                 Storage.Write(statePath, state, SurveyorJson.Default.MonitorState);
             }
 
-            if (rejectedRevision != settings.CredentialRevision)
+            if (!quietHoursActive && rejectedRevision != settings.CredentialRevision)
             {
                 // Start each send in this sampling window so an API delay cannot add up across disks.
-                var attempts = pending.Select(async item =>
+                var attempts = pending.Select(item =>
+                    Send(item.Measurement, item.Measurement.ToSms(host, item.Duration), settings, cancellationToken))
+                    .ToList();
+                if (rules.ReadSummary(host, dispatchAt) is { } summary)
                 {
-                    var outcome = await sms.Send(settings, item.Measurement.ToSms(host, item.Duration), cancellationToken);
-                    return (item.Measurement, Outcome: outcome, FinishedAt: DateTimeOffset.UtcNow);
-                }).ToList();
+                    attempts.Add(Send(null, summary, settings, cancellationToken));
+                }
 
                 while (attempts.Count > 0)
                 {
@@ -86,7 +102,17 @@ internal sealed class Monitor(FreeMobileSms sms)
                     }
 
                     var delivery = await attempt;
-                    rules.Record(delivery.Measurement.Key, delivery.Outcome, delivery.FinishedAt);
+                    var label = "quiet-hours summary";
+                    if (delivery.Measurement is { } measurement)
+                    {
+                        rules.Record(measurement.Key, delivery.Outcome, delivery.FinishedAt);
+                        label = measurement.Label;
+                    }
+                    else
+                    {
+                        rules.RecordSummary(delivery.Outcome, delivery.FinishedAt);
+                    }
+
                     if (delivery.Outcome == SmsOutcome.CredentialsRejected)
                     {
                         if (state.RejectedCredentialRevision != settings.CredentialRevision)
@@ -97,15 +123,15 @@ internal sealed class Monitor(FreeMobileSms sms)
                     }
                     else if (delivery.Outcome == SmsOutcome.Accepted)
                     {
-                        Console.WriteLine($"Free Mobile accepted the {delivery.Measurement.Label} alert.");
+                        Console.WriteLine($"Free Mobile accepted the {label} SMS.");
                     }
-                    else if (delivery.Outcome == SmsOutcome.TemporaryFailure)
+                    else if (delivery.Outcome == SmsOutcome.TemporaryFailure || delivery.Measurement is null)
                     {
-                        Console.Error.WriteLine($"The {delivery.Measurement.Label} SMS failed temporarily and will be retried.");
+                        Console.Error.WriteLine($"The {label} SMS could not be sent and will be retried.");
                     }
                     else
                     {
-                        Console.Error.WriteLine($"Free Mobile rejected the {delivery.Measurement.Label} SMS request.");
+                        Console.Error.WriteLine($"Free Mobile rejected the {label} SMS request.");
                     }
 
                     Storage.Write(statePath, state, SurveyorJson.Default.MonitorState);
@@ -115,5 +141,13 @@ internal sealed class Monitor(FreeMobileSms sms)
             firstSample = false;
         }
         while (await timer.WaitForNextTickAsync(cancellationToken));
+    }
+
+    private async Task<(Measurement? Measurement, SmsOutcome Outcome, DateTimeOffset FinishedAt)> Send(
+        Measurement? measurement, string message, Settings settings, CancellationToken cancellationToken)
+    {
+        var outcome = await sms.Send(settings, message, cancellationToken);
+        var result = (measurement, outcome, DateTimeOffset.UtcNow);
+        return result;
     }
 }

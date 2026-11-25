@@ -10,6 +10,7 @@ internal sealed record Settings
     public double DiskThreshold { get; init; } = 85;
     public int CpuDurationSeconds { get; init; } = 300;
     public Dictionary<string, double> DiskThresholds { get; init; } = new(StringComparer.Ordinal);
+    public QuietHours QuietHours { get; init; } = new();
 
     internal bool IsValid()
     {
@@ -19,7 +20,8 @@ internal sealed record Settings
             && IsThreshold(DiskThreshold) && CpuDurationSeconds is >= 30 and <= 86400;
         var validMounts = DiskThresholds is not null && DiskThresholds.All(pair =>
             pair.Key.StartsWith('/') && IsThreshold(pair.Value));
-        var result = validCredentials && validThresholds && validMounts;
+        var validQuietHours = QuietHours?.IsValid() == true;
+        var result = validCredentials && validThresholds && validMounts && validQuietHours;
         return result;
     }
 
